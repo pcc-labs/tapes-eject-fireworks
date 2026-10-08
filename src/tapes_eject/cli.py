@@ -1,4 +1,4 @@
-"""tapes-eject: Paper labels to a Fireworks serverless LoRA fine-tune."""
+"""tapes-eject: labeled agent sessions to a Fireworks serverless LoRA fine-tune."""
 
 from __future__ import annotations
 
@@ -8,8 +8,19 @@ import sys
 
 from . import config, curate, doctor, report
 from .autolabel import Autolabel
-from .export import _write_jsonl, problems, run_export, too_big, write_export
+from .export import _cached_export, _write_jsonl, problems, run_export, too_big, write_export
 from .paper import Paper
+from .session import parse_session
+from .tapes import (
+    AUTO_LABELS,
+    MANUAL_LABELS,
+    Tapes,
+    find_labels,
+    mark,
+    merge_auto,
+    read_labels,
+    write_labels,
+)
 
 
 def cmd_doctor(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -37,9 +48,64 @@ def label_candidates(
     return ids, skipped
 
 
+def source(cfg: config.Config):
+    """Where sessions come from: a local tapes stack (default) or a Paper org."""
+    if cfg.source == "paper":
+        return Paper(org_slug=cfg.org_slug)
+    return Tapes(cfg.tapes_api, cfg.labels_path)
+
+
+def label_local(cfg: config.Config, args: argparse.Namespace) -> int:
+    """Find `pushback` and `apology` turns in the newest local sessions and keep them in
+    data/local_labels.jsonl. Hand-set labels are never touched."""
+    tapes = Tapes(cfg.tapes_api, cfg.labels_path)
+    items = tapes.sessions(limit=args.sessions)
+    ids, skipped = label_candidates(items, cfg)
+    for sid, reason in skipped:
+        print(f"  skip {sid}: {reason}")
+    seen = {it["id"]: it.get("last_seen_at") for it in items}
+    found: list[dict] = []
+    scanned: set[str] = set()
+    for i, sid in enumerate(ids, 1):
+        print(f"  [{i}/{len(ids)}] {sid}", file=sys.stderr)
+        rec, _ = _cached_export(tapes, sid, seen.get(sid), cfg.data_dir / "cache")
+        sess = parse_session(rec) if rec else None
+        if sess is None:
+            continue
+        scanned.add(sid)
+        found.extend(find_labels(sess))
+    write_labels(cfg.labels_path, merge_auto(read_labels(cfg.labels_path), found, scanned))
+    for name in AUTO_LABELS:
+        if args.name and name != args.name:
+            continue
+        rows = [r for r in found if r["label"] == name]
+        sessions = len({r["session_id"] for r in rows})
+        print(f"{name}: {len(rows)} turns in {sessions} of {len(scanned)} sessions")
+        for r in rows[: args.show]:
+            print(f"  {r['session_id'][:13]}  {r['evidence']}")
+    print(f"labels -> {cfg.labels_path} (pattern-matched: read the evidence, fix with `mark`)")
+    return 0
+
+
+def cmd_mark(cfg: config.Config, args: argparse.Namespace) -> int:
+    if cfg.source == "paper":
+        print("with TAPES_EJECT_SOURCE=paper, set labels in the Paper console")
+        return 1
+    rows = mark(read_labels(cfg.labels_path), args.label, args.session_ids, args.remove)
+    write_labels(cfg.labels_path, rows)
+    verb = "removed from" if args.remove else "added to"
+    print(f"{args.label} {verb} {len(args.session_ids)} session(s) in {cfg.labels_path}")
+    return 0
+
+
 def cmd_label(cfg: config.Config, args: argparse.Namespace) -> int:
-    """Find a label across the newest sessions; with --apply, label them in Paper. Sessions
-    over the size caps are left out before the cassette exports anything."""
+    """Local tapes: find labels by pattern. Paper: find a label through the autolabel cassette,
+    and with --apply write it to Paper. Sessions over the size caps are left out either way."""
+    if cfg.source != "paper":
+        return label_local(cfg, args)
+    if not args.name:
+        print("with TAPES_EJECT_SOURCE=paper, name the label to find, e.g. `label pushback`")
+        return 1
     items = Paper(org_slug=cfg.org_slug).sessions(limit=args.sessions)
     ids, skipped = label_candidates(items, cfg)
     for sid, reason in skipped:
@@ -71,8 +137,7 @@ def export_status(report: dict, allow_partial: bool) -> int:
 
 
 def cmd_export(cfg: config.Config, args: argparse.Namespace) -> int:
-    paper = Paper(org_slug=cfg.org_slug)
-    ex = run_export(paper, cfg, cache_dir=cfg.data_dir / "cache")
+    ex = run_export(source(cfg), cfg, cache_dir=cfg.data_dir / "cache")
     write_export(ex, cfg.data_dir)
     print(
         f"{len(ex.sessions)} sessions, {len(ex.turns)} turns, {len(ex.labels)} labels "
@@ -154,17 +219,23 @@ def cmd_report(cfg: config.Config, args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tapes-eject")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("doctor", help="check paperd, the cassette, and Fireworks").set_defaults(
+    sub.add_parser("doctor", help="check the session source and Fireworks").set_defaults(
         fn=cmd_doctor
     )
-    lab = sub.add_parser("label", help="Act 1: find a label across recent sessions, then apply it")
+    lab = sub.add_parser("label", help="find pushback and apology turns in recent sessions")
     lab.add_argument(
-        "name", help="apology, dream, subagents, no-outcome, pushback, question, observation"
+        "name", nargs="?", help="show only this label; required with TAPES_EJECT_SOURCE=paper"
     )
-    lab.add_argument("--sessions", type=int, default=25)
-    lab.add_argument("--apply", action="store_true", help="write the labels to Paper")
+    lab.add_argument("--sessions", type=int, default=200, help="how many recent sessions to scan")
+    lab.add_argument("--show", type=int, default=5, help="examples to print per label")
+    lab.add_argument("--apply", action="store_true", help="Paper only: write the labels to Paper")
     lab.set_defaults(fn=cmd_label)
-    exp = sub.add_parser("export", help="pull labeled sessions from Paper into data/")
+    mk = sub.add_parser("mark", help="label whole sessions by hand, e.g. golden or regression")
+    mk.add_argument("label", choices=MANUAL_LABELS + AUTO_LABELS)
+    mk.add_argument("session_ids", nargs="+")
+    mk.add_argument("--remove", action="store_true", help="drop the label from these sessions")
+    mk.set_defaults(fn=cmd_mark)
+    exp = sub.add_parser("export", help="pull sessions, turns, and labels into data/")
     exp.add_argument(
         "--allow-partial", action="store_true", help="exit 0 even if some exports failed"
     )

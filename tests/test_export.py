@@ -110,9 +110,7 @@ def test_choose_sessions_honours_the_skip_list():
     labeled = {"poison": item("poison", 9, output_tokens=201_633), "s1": item("s1", 4)}
     ids, skipped = choose_sessions(labeled, [item("poison")], 5, 150, skip=frozenset({"poison"}))
     assert ids == ["s1"]
-    assert skipped == [
-        ("poison", "in TAPES_EJECT_SKIP_SESSIONS: its export overloads Paper")
-    ]
+    assert skipped == [("poison", "in TAPES_EJECT_SKIP_SESSIONS: its export overloads Paper")]
 
 
 def test_session_row_carries_the_project_from_the_cwd():

@@ -16,6 +16,8 @@ REGRESSION = "regression"
 NO_OUTCOME = "no-outcome"
 
 DEFAULT_AUTOLABEL_URL = "http://127.0.0.1:9996/v1/cassettes/autolabel"
+DEFAULT_TAPES_API = "http://127.0.0.1:18081"
+SOURCES = ("tapes", "paper")
 # Sessions whose rollup shows more output tokens than this are never exported. Turn count
 # alone misses a session of three turns whose tool output runs to hundreds of megabytes, and
 # exporting one of those can overload Paper's export service.
@@ -36,6 +38,8 @@ class Config:
     tokenizer_model: str = DEFAULT_TOKENIZER
     judge_model: str = DEFAULT_BASE_MODEL  # serverless per-token chat model that scores answers
     fireworks_api: str = FIREWORKS_API
+    source: str = "tapes"  # tapes: a local tapes stack; paper: a Paper org through paperctl
+    tapes_api: str = DEFAULT_TAPES_API
     autolabel_url: str = DEFAULT_AUTOLABEL_URL
     org_slug: str | None = None
     sample_sessions: int = 200
@@ -44,6 +48,10 @@ class Config:
     export_pause: float = 1.0  # seconds between export requests; Paper's export dislikes bursts
     skip_sessions: frozenset[str] = frozenset()  # ids whose export takes Paper's service down
     data_dir: Path = Path("data")
+
+    @property
+    def labels_path(self) -> Path:
+        return self.data_dir / "local_labels.jsonl"
 
     def require_key(self) -> str:
         if not self.fireworks_api_key:
@@ -72,6 +80,8 @@ def load(env: dict[str, str] | None = None) -> Config:
         tokenizer_model=env.get("TAPES_EJECT_TOKENIZER") or DEFAULT_TOKENIZER,
         judge_model=env.get("TAPES_EJECT_JUDGE_MODEL") or DEFAULT_BASE_MODEL,
         fireworks_api=(env.get("FIREWORKS_BASE_URL") or FIREWORKS_API).rstrip("/"),
+        source=_source(env.get("TAPES_EJECT_SOURCE")),
+        tapes_api=(env.get("TAPES_API") or DEFAULT_TAPES_API).rstrip("/"),
         autolabel_url=(env.get("AUTOLABEL_URL") or DEFAULT_AUTOLABEL_URL).rstrip("/"),
         org_slug=env.get("PAPER_ORG_SLUG") or None,
         sample_sessions=int(env.get("TAPES_EJECT_SAMPLE_SESSIONS") or 200),
@@ -84,6 +94,13 @@ def load(env: dict[str, str] | None = None) -> Config:
             s.strip() for s in (env.get("TAPES_EJECT_SKIP_SESSIONS") or "").split(",") if s.strip()
         ),
     )
+
+
+def _source(value: str | None) -> str:
+    value = (value or "tapes").strip().lower()
+    if value not in SOURCES:
+        raise SystemExit(f"TAPES_EJECT_SOURCE must be one of {SOURCES}, not {value!r}")
+    return value
 
 
 def ping_url(base: str) -> str:

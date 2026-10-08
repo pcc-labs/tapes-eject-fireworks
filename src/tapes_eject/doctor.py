@@ -60,10 +60,33 @@ def _fireworks(cfg: Config) -> str:
     return f"key works; {len(models(cfg))} serverless models; training on {cfg.base_model}"
 
 
+def _tapes(cfg: Config) -> str:
+    from .tapes import Tapes
+
+    n = len(Tapes(cfg.tapes_api, cfg.labels_path).sessions(limit=200))
+    if not n:
+        raise RuntimeError(f"{cfg.tapes_api} has no sessions: import history with tapes first")
+    return f"{cfg.tapes_api}, {n}{'+' if n == 200 else ''} sessions"
+
+
+def _local_labels(cfg: Config) -> str:
+    from .tapes import read_labels
+
+    rows = read_labels(cfg.labels_path)
+    if not rows:
+        return "none yet; run `tapes-eject label`"
+    return f"{len(rows)} in {cfg.labels_path}"
+
+
+def source_checks(cfg: Config) -> list[Check]:
+    if cfg.source == "paper":
+        return [
+            ("paperd", _paperd),
+            ("paper org", lambda: cfg.org_slug or _paper_org()),
+            ("autolabel cassette", lambda: _cassette(cfg.autolabel_url)),
+        ]
+    return [("tapes", lambda: _tapes(cfg)), ("labels", lambda: _local_labels(cfg))]
+
+
 def checks(cfg: Config) -> list[Check]:
-    return [
-        ("paperd", _paperd),
-        ("paper org", lambda: cfg.org_slug or _paper_org()),
-        ("autolabel cassette", lambda: _cassette(cfg.autolabel_url)),
-        ("fireworks", lambda: _fireworks(cfg)),
-    ]
+    return source_checks(cfg) + [("fireworks", lambda: _fireworks(cfg))]
