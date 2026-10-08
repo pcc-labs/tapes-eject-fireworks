@@ -31,6 +31,7 @@ Sessions with no correction or failure label become training examples, along wit
 
 - Python 3.11+ and [uv](https://docs.astral.sh/uv/)
 - Docker, running
+- Go 1.24+, to install tapes-test
 - Codex or Claude Code history on this machine
 - A [Fireworks](https://fireworks.ai) account and API key, for training only
 
@@ -41,11 +42,13 @@ Sessions with no correction or failure label become training examples, along wit
 Install [tapes-test](https://github.com/pcc-labs/tapes-test) and run it once. It starts a local tapes stack in Docker on port 18081 and imports the last 30 days of Codex and Claude Code sessions.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pcc-labs/tapes-test/main/install.sh | sh
+go install github.com/pcc-labs/tapes-test/cmd/tapes-skills-demo@main
 tapes-skills-demo check
 tapes-skills-demo --ollama        # or export OPENAI_API_KEY and drop --ollama
 tapes-skills-demo sessions        # what was imported
 ```
+
+Install from `@main`: the current tagged release and the curl installer read Codex history only. `check` should print a `claude code history` line if you use Claude Code.
 
 `tapes-skills-demo` also suggests skills written from your history. That part is optional here: answer `none` when it asks which to write. Use `--since-days 0` to import everything, and run it again later to pick up new sessions.
 
@@ -158,6 +161,12 @@ All settings live in `.env`; see `.env.example`.
 - **Very few eval cases.** Eval cases come from corrected turns and `golden`/`regression` sessions. With few of those, base-vs-tuned scores won't mean much.
 - **Out-of-capacity error from Fireworks.** The serverless pool is full. Retry later.
 - **The tokenizer asks for `trust_remote_code`.** Kimi's tokenizer ships custom code. The script loads it through the Fireworks cookbook loader, which allows it.
+
+## Using it with an agent
+
+This repo ships a [SKILL.md](SKILL.md) that walks an agent through setup, labeling, and training, including where to stop and ask you. Point Claude Code or Codex at it:
+
+> Read SKILL.md in this repo and follow it against my agent history.
 
 ## Development
 
