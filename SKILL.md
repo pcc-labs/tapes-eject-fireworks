@@ -33,7 +33,7 @@ tapes-skills-demo check --ollama
 With Go installed, `go install github.com/pcc-labs/tapes-test/cmd/tapes-skills-demo@latest`
 works too. Releases before v0.1.3 read Codex only: when the person uses
 Claude Code, confirm `check` prints a `claude code history` line, and if it
-does not, run the install again and check `tapes-skills-demo version`.
+does not, the binary predates v0.1.3: run the install again.
 
 On any `FAIL` line, stop and tell the user what it says. Docker not running
 and a missing key are theirs to fix.
@@ -136,7 +136,7 @@ until deleted.
 |---|---|
 | `could not reach tapes` | Start Docker, then `tapes-skills-demo --ollama` again. It re-imports nothing. |
 | `has no sessions` | `tapes-skills-demo check`; pass `--claude-root` or `--codex-root` if the history lives elsewhere. |
-| No Claude Code sessions | `tapes-skills-demo version` is older than v0.1.3. Install again, then import again. |
+| No Claude Code sessions | The binary predates v0.1.3 (`check` shows no `claude code history` line). Install again, then import again. |
 | `only N training examples` | Import more history or `mark` more `golden` sessions, then `export` and `prepare`. |
 | `refusing a partial export` | Run `export` again. Pass `--force` to `prepare` only if the user accepts the gaps. |
 | Out-of-capacity from Fireworks | The serverless pool is full. Retry later. |
